@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Log;
+use Torann\GeoIP\Facades\GeoIP;
 
 /**
  * Secure File Upload Middleware
@@ -77,8 +78,10 @@ class SecureFileUpload
     {
         // Check if file is valid
         if (!$file->isValid()) {
+            $geoData = $this->getGeolocation($request);
             Log::warning('Invalid file upload attempt', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'error' => $file->getErrorMessage(),
             ]);
             abort(422, 'Invalid file upload');
@@ -86,8 +89,10 @@ class SecureFileUpload
 
         // Check file size
         if ($file->getSize() > $this->maxFileSize) {
+            $geoData = $this->getGeolocation($request);
             Log::warning('File too large', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'size' => $file->getSize(),
             ]);
             abort(422, 'File size exceeds maximum allowed size');
@@ -96,8 +101,10 @@ class SecureFileUpload
         // Check extension
         $extension = strtolower($file->getClientOriginalExtension());
         if (in_array($extension, $this->blockedExtensions)) {
+            $geoData = $this->getGeolocation($request);
             Log::critical('Blocked file extension upload attempt', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'extension' => $extension,
                 'filename' => $file->getClientOriginalName(),
             ]);
@@ -107,8 +114,10 @@ class SecureFileUpload
         // Check MIME type
         $mimeType = $file->getMimeType();
         if (!in_array($mimeType, $this->allowedMimeTypes)) {
+            $geoData = $this->getGeolocation($request);
             Log::warning('Invalid MIME type upload attempt', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'mime_type' => $mimeType,
                 'filename' => $file->getClientOriginalName(),
             ]);
@@ -118,8 +127,10 @@ class SecureFileUpload
         // Check for double extensions
         $filename = $file->getClientOriginalName();
         if (substr_count($filename, '.') > 1) {
+            $geoData = $this->getGeolocation($request);
             Log::warning('Double extension detected', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'filename' => $filename,
             ]);
             abort(422, 'Invalid filename');
@@ -127,11 +138,34 @@ class SecureFileUpload
 
         // Scan file content for malicious patterns
         if ($this->containsMaliciousContent($file)) {
+            $geoData = $this->getGeolocation($request);
             Log::critical('Malicious file content detected', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'filename' => $file->getClientOriginalName(),
             ]);
             abort(422, 'File contains malicious content');
+        }
+    }
+
+    /**
+     * Get geolocation data from IP address
+     */
+    private function getGeolocation(Request $request): array
+    {
+        try {
+            $ip = $request->ip();
+            if (in_array($ip, ['127.0.0.1', '::1', 'localhost'])) {
+                return ['country' => 'Local', 'city' => 'Localhost'];
+            }
+            $location = GeoIP::getLocation($ip);
+            return [
+                'country' => $location->country ?? 'Unknown',
+                'city' => $location->city ?? 'Unknown',
+                'iso_code' => $location->iso_code ?? null,
+            ];
+        } catch (\Exception $e) {
+            return ['country' => 'Unknown', 'city' => 'Unknown'];
         }
     }
 

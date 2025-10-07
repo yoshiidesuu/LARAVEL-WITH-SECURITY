@@ -6,11 +6,13 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Log;
+use Torann\GeoIP\Facades\GeoIP;
 
 /**
  * Security Logging Middleware
  * 
  * Logs all security-relevant events and suspicious activities
+ * Including IP address and geolocation data
  */
 class SecurityLogger
 {
@@ -60,9 +62,12 @@ class SecurityLogger
      */
     private function logRequest(Request $request): void
     {
+        $geoData = $this->getGeolocation($request);
+        
         $data = [
             'timestamp' => now()->toIso8601String(),
             'ip' => $request->ip(),
+            'geolocation' => $geoData,
             'method' => $request->method(),
             'url' => $request->fullUrl(),
             'user_agent' => $request->userAgent(),
@@ -79,9 +84,12 @@ class SecurityLogger
      */
     private function logResponse(Request $request, Response $response, float $responseTime): void
     {
+        $geoData = $this->getGeolocation($request);
+        
         $data = [
             'timestamp' => now()->toIso8601String(),
             'ip' => $request->ip(),
+            'geolocation' => $geoData,
             'method' => $request->method(),
             'url' => $request->fullUrl(),
             'status' => $response->getStatusCode(),
@@ -131,15 +139,67 @@ class SecurityLogger
 
         // Log if any suspicious activity detected
         if (!empty($suspicious)) {
+            $geoData = $this->getGeolocation($request);
+            
             Log::channel('security')->warning('Suspicious Activity Detected', [
                 'flags' => $suspicious,
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'url' => $request->fullUrl(),
                 'method' => $request->method(),
                 'user_agent' => $request->userAgent(),
                 'status' => $response->getStatusCode(),
                 'response_time' => $responseTime,
             ]);
+        }
+    }
+
+    /**
+     * Get geolocation data from IP address
+     */
+    private function getGeolocation(Request $request): array
+    {
+        try {
+            $ip = $request->ip();
+            
+            // Skip geolocation for local IPs
+            if (in_array($ip, ['127.0.0.1', '::1', 'localhost'])) {
+                return [
+                    'country' => 'Local',
+                    'city' => 'Localhost',
+                    'state' => 'Local',
+                    'latitude' => null,
+                    'longitude' => null,
+                    'timezone' => config('app.timezone'),
+                    'iso_code' => 'LOCAL',
+                ];
+            }
+
+            // Get geolocation data
+            $location = GeoIP::getLocation($ip);
+            
+            return [
+                'country' => $location->country ?? 'Unknown',
+                'city' => $location->city ?? 'Unknown',
+                'state' => $location->state_name ?? $location->state ?? null,
+                'latitude' => $location->lat ?? null,
+                'longitude' => $location->lon ?? null,
+                'timezone' => $location->timezone ?? null,
+                'iso_code' => $location->iso_code ?? null,
+                'postal_code' => $location->postal_code ?? null,
+            ];
+        } catch (\Exception $e) {
+            // If geolocation fails, return basic info
+            return [
+                'country' => 'Unknown',
+                'city' => 'Unknown',
+                'state' => null,
+                'latitude' => null,
+                'longitude' => null,
+                'timezone' => null,
+                'iso_code' => null,
+                'error' => 'Geolocation unavailable',
+            ];
         }
     }
 

@@ -6,6 +6,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Log;
+use Torann\GeoIP\Facades\GeoIP;
 
 /**
  * XSS Protection Middleware
@@ -54,8 +55,11 @@ class AntiXss
         $allInput = $request->all();
         
         if ($this->containsXss($allInput)) {
+            $geoData = $this->getGeolocation($request);
+            
             Log::warning('XSS attempt detected', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'url' => $request->fullUrl(),
                 'method' => $request->method(),
                 'user_agent' => $request->userAgent(),
@@ -67,6 +71,27 @@ class AntiXss
         }
 
         return $next($request);
+    }
+
+    /**
+     * Get geolocation data from IP address
+     */
+    private function getGeolocation(Request $request): array
+    {
+        try {
+            $ip = $request->ip();
+            if (in_array($ip, ['127.0.0.1', '::1', 'localhost'])) {
+                return ['country' => 'Local', 'city' => 'Localhost'];
+            }
+            $location = GeoIP::getLocation($ip);
+            return [
+                'country' => $location->country ?? 'Unknown',
+                'city' => $location->city ?? 'Unknown',
+                'iso_code' => $location->iso_code ?? null,
+            ];
+        } catch (\Exception $e) {
+            return ['country' => 'Unknown', 'city' => 'Unknown'];
+        }
     }
 
     /**

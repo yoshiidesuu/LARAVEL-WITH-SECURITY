@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
+use Torann\GeoIP\Facades\GeoIP;
 
 /**
  * Web Application Firewall (WAF) Middleware
@@ -166,13 +167,37 @@ class WebApplicationFirewall
      */
     private function logAttack(Request $request, string $type): void
     {
+        $geoData = $this->getGeolocation($request);
+        
         Log::critical("WAF: {$type}", [
             'ip' => $request->ip(),
+            'geolocation' => $geoData,
             'url' => $request->fullUrl(),
             'method' => $request->method(),
             'user_agent' => $request->userAgent(),
             'input' => $request->all(),
             'headers' => $request->headers->all(),
         ]);
+    }
+
+    /**
+     * Get geolocation data from IP address
+     */
+    private function getGeolocation(Request $request): array
+    {
+        try {
+            $ip = $request->ip();
+            if (in_array($ip, ['127.0.0.1', '::1', 'localhost'])) {
+                return ['country' => 'Local', 'city' => 'Localhost'];
+            }
+            $location = GeoIP::getLocation($ip);
+            return [
+                'country' => $location->country ?? 'Unknown',
+                'city' => $location->city ?? 'Unknown',
+                'iso_code' => $location->iso_code ?? null,
+            ];
+        } catch (\Exception $e) {
+            return ['country' => 'Unknown', 'city' => 'Unknown'];
+        }
     }
 }

@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
+use Torann\GeoIP\Facades\GeoIP;
 
 /**
  * Webhook Replay Protection Middleware
@@ -37,8 +38,10 @@ class WebhookReplayProtection
         $timestamp = $request->header('X-Webhook-Timestamp') ?? $request->input('timestamp');
         
         if (!$timestamp || !$this->isTimestampValid($timestamp)) {
+            $geoData = $this->getGeolocation($request);
             Log::warning('Webhook replay attack detected - invalid timestamp', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'url' => $request->fullUrl(),
                 'timestamp' => $timestamp,
             ]);
@@ -49,8 +52,10 @@ class WebhookReplayProtection
         $signature = $this->generateSignature($request);
         
         if ($this->isDuplicate($signature)) {
+            $geoData = $this->getGeolocation($request);
             Log::warning('Webhook replay attack detected - duplicate request', [
                 'ip' => $request->ip(),
+                'geolocation' => $geoData,
                 'url' => $request->fullUrl(),
                 'signature' => $signature,
             ]);
@@ -61,6 +66,27 @@ class WebhookReplayProtection
         $this->markAsProcessed($signature);
 
         return $next($request);
+    }
+
+    /**
+     * Get geolocation data from IP address
+     */
+    private function getGeolocation(Request $request): array
+    {
+        try {
+            $ip = $request->ip();
+            if (in_array($ip, ['127.0.0.1', '::1', 'localhost'])) {
+                return ['country' => 'Local', 'city' => 'Localhost'];
+            }
+            $location = GeoIP::getLocation($ip);
+            return [
+                'country' => $location->country ?? 'Unknown',
+                'city' => $location->city ?? 'Unknown',
+                'iso_code' => $location->iso_code ?? null,
+            ];
+        } catch (\Exception $e) {
+            return ['country' => 'Unknown', 'city' => 'Unknown'];
+        }
     }
 
     /**
